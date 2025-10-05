@@ -1,0 +1,8 @@
+PUSH INSTRUCTIONS:
+git add .
+git commit -m "commit message"
+git push origin main
+
+PULL INSTRUCTIONS:
+git pull origin main
+
