@@ -1,8 +1,17 @@
 PUSH INSTRUCTIONS:
-git add .
-git commit -m "commit message"
-git push origin main
+  Project wide commit:
+    git add .
+    git commit -m "commit message"
+    git push origin main
+
+  File specific commit:
+    git add 'filename'
+    git commit -m "commit message" -- 'filename'
+    git push origin main
+
 
 PULL INSTRUCTIONS:
-git pull origin main
-s
+    git pull origin main
+
+
+
