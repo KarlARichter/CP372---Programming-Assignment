@@ -13,6 +13,15 @@ def recvline(sock):
         buf += chunk
     return buf.decode(errors="ignore").rstrip("\r\n")
 
+def recvn(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
 def sendline(sock, s: str):
     sock.sendall((s + "\n").encode())
 
@@ -27,7 +36,6 @@ def main():
         if not line:
             return
         if line.startswith("BUSY"):
-            # SERVER IS FULL
             print(line)
             return
         if not line.startswith("NAME? "):
@@ -47,13 +55,27 @@ def main():
             if msg.strip().lower() == "exit":
                 resp = recvline(s)
                 if resp:
-                    print(resp)
+                    print("Server response: ", resp)
                 break
 
             resp = recvline(s)
             if resp is None:
                 break
-            print(resp)
+
+            if resp.startswith("STATUS "):
+                parts = resp.split()
+                if len(parts) == 2 and parts[1].isdigit():
+                    n = int(parts[1])
+                    payload = recvn(s, n)
+                    if payload is None:
+                        print("Server response: <truncated>")
+                        break
+                    print("Server response:", payload.decode(errors="ignore"))
+                else:
+                    print("Server response:", resp)
+                continue
+
+            print("Server response:", resp)
 
 if __name__ == "__main__":
     main()
