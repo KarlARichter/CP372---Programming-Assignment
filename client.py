@@ -53,6 +53,9 @@ def main():
 
             sendline(s, msg)
             if msg.strip().lower() == "exit":
+                resp = recvline(s)
+                if resp is not None:
+                    print(resp)
                 break
 
             resp = recvline(s)
