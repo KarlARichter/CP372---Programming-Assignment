@@ -9,9 +9,9 @@ def recvline(sock):
     while b"\n" not in buf:
         chunk = sock.recv(1024)
         if not chunk:
-            return None
+            return buf.decode(errors="ignore") if buf else None
         buf += chunk
-    return buf.decode(errors="ignore").rstrip("\r\n")
+    return buf.decode(errors="ignore").splitlines()[0]
 
 def recvn(sock, n):
     buf = b""
@@ -53,9 +53,6 @@ def main():
 
             sendline(s, msg)
             if msg.strip().lower() == "exit":
-                resp = recvline(s)
-                if resp:
-                    print("Server response: ", resp)
                 break
 
             resp = recvline(s)

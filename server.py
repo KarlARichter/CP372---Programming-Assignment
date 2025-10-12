@@ -24,9 +24,9 @@ def recvline(conn):
         except ConnectionError:
             return None
         if not chunk:
-            return None
+            return buf.decode(errors="ignore") if buf else None
         buf += chunk
-    return buf.decode(errors="ignore").rstrip("\r\n")
+    return buf.decode(errors="ignore").splitlines()[0]
 
 def sendline(conn, s: str):
     try:
@@ -99,8 +99,9 @@ def format_status_json():
 def handle_client(conn, addr):
     assigned_name = try_assign_client_id(addr)
     if assigned_name is None:
+        sendline(conn, f"BUSY: Server is full (3 clients max reached)")
         try:
-            conn.shutdown(socket.SHUT_RDWR)
+            conn.shutdown(socket.SHUT_WR)
         except Exception:
             pass
         conn.close()
@@ -112,7 +113,7 @@ def handle_client(conn, addr):
     if not line or not line.startswith("NAME "):
         release_client_id(assigned_name)
         try:
-            conn.shutdown(socket.SHUT_RDWR)
+            conn.shutdown(socket.SHUT_WR)
         except Exception:
             pass
         conn.close()
@@ -128,6 +129,7 @@ def handle_client(conn, addr):
 
             low = msg.strip().lower()
             if low == "exit":
+                sendline(conn, "EXIT")
                 break
             elif low == "status":
                 payload = format_status_json()
@@ -139,7 +141,7 @@ def handle_client(conn, addr):
         record_disconnect(assigned_name)
         release_client_id(assigned_name)
         try:
-            conn.shutdown(socket.SHUT_RDWR)
+            conn.shutdown(socket.SHUT_WR)
         except Exception:
             pass
         conn.close()
