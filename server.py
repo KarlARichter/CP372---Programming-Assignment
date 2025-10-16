@@ -1,4 +1,10 @@
-# Name: Haitham Timimi (000006805) & Karl Richter (169061728)
+"""
+* CP372 Programming ASGMT - Fall 2025
+* Server.py
+* Haitham Timimi | timi6805@mylaurier.ca | 000006805
+* Karl Richter | rich1728@mylaurier.ca | 169061728
+* 10/20/2025
+"""
 
 #listens to incoming connections on specific IP addresses and port
 

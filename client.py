@@ -1,3 +1,11 @@
+"""
+* CP372 Programming ASGMT - Fall 2025
+* Client.py
+* Haitham Timimi | timi6805@mylaurier.ca | 000006805
+* Karl Richter | rich1728@mylaurier.ca | 169061728
+* 10/20/2025
+"""
+
 import socket
 
 EOF_MARKER = b"<<EOF>>" 
