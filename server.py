@@ -1,258 +1,175 @@
-"""
+# Name: Haitham Timimi (000006805) & Karl Richter (169061728)
 
-* CP372 Programming ASGMT - Fall 2025
-* server.py
-* Karl Richter | rich1728@mylaurier.ca | 169061728
-* 
-* 10/20/2025
+#listens to incoming connections on specific IP addresses and port
 
-"""
-
-
-import socket
 import threading
-import json
-from datetime import datetime
-from pathlib import Path
+import socket
+import datetime
+import os
 
-HOST = "127.0.0.1"   
-PORT = 5000          
-MAX_CLIENTS = 3      # maximum simultaneous clients allowed
+client_cache = {}
+MAX_CLIENTS = 3
+client_count = 0
 
-# Directory used to store files served by the server
-REPO_DIR = Path(__file__).with_name("repo")
+available_client_slots = ["Client01", "Client02", "Client03"]
 
-# Track allocated numeric client IDs
-_assigned_ids = set()
-_assigned_ids_lock = threading.Lock()
+REPO_PATH = os.path.join(os.path.dirname(__file__), "repo")
 
-# This lets the "status" command show connect/disconnect times
-clients_cache = {}
-clients_cache_lock = threading.Lock()
+# frames variable-length responses
+EOF_MARKER = b"<<EOF>>" 
+def _send_with_eof(sock, data: bytes):
+    sock.sendall(data)
+    sock.sendall(EOF_MARKER)
 
-def now_str() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
 
-def recvline(conn):
-    # Read bytes until a newline or EOF; return the first decoded line or None.
-    # We return partial buffered data if peer closes mid-line so short final
-    # messages aren't lost during shutdown.
-    buf = b""
-    while b"\n" not in buf:
-        try:
-            chunk = conn.recv(1024)
-        except ConnectionError:
-            # treat socket errors as EOF for our simple protocol
-            return None
-        # connection closed -> return any buffered text or None
-        if not chunk:
-            return buf.decode(errors="ignore") if buf else None
-        buf += chunk
-    # decode and return the first line only
-    return buf.decode(errors="ignore").splitlines()[0]
-
-def sendline(conn, s: str):
+# helper to handle list function
+def _handle_list(sock):
     try:
-        conn.sendall((s + "\n").encode())
-    except Exception:
-        pass
+        entries = []
+        if os.path.isdir(REPO_PATH):
+            for name in os.listdir(REPO_PATH):
+                full = os.path.join(REPO_PATH, name)
+                if os.path.isfile(full):
+                    entries.append(name)
+        payload = ("\n".join(entries) if entries else "No files.").encode()
+    except Exception as e:
+        payload = f"Repository error: {e}".encode()
+    _send_with_eof(sock, payload)
 
-def send_json(conn, tag: str, obj):
-    # Send a length-prefixed JSON payload: "<tag> <len>\\n<payload bytes>"
-    data = json.dumps(obj, indent=4).encode()
-    sendline(conn, f"{tag} {len(data)}")
-    try:
-        conn.sendall(data)
-    except Exception:
-        pass
+# helper to parse filenames from repo
+def _parse_print_filename(msg: str) -> str | None:
+    rest = msg[6:].strip() 
+    if not rest:
+        return None
+    if (rest[0] == rest[-1]) and rest[0] in ('"', "'") and len(rest) >= 2:
+        return rest[1:-1].strip()
+    return rest.split()[0]
 
-def try_assign_client_id():
-    # Allocate the smallest unused numeric id starting at 1, or return None
-    with _assigned_ids_lock:
-        if len(_assigned_ids) >= MAX_CLIENTS:
-            return None
-        i = 1
-        while i in _assigned_ids:
-            i += 1
-        _assigned_ids.add(i)
-        return f"Client{i:02d}"
-
-def release_client_id(name: str):
-    # Release a numeric id so it can be reused
-    if not name:
-        return
-    try:
-        num = int(name.replace("Client", ""))
-    except Exception:
-        return
-    with _assigned_ids_lock:
-        _assigned_ids.discard(num)
-
-def record_connect(name: str, addr):
-    # Store address and connection timestamp for status reporting.
-    with clients_cache_lock:
-        clients_cache[name] = {
-            "addr": addr,
-            "connected_at": now_str(),
-            "disconnected_at": None,
-        }
-
-def record_disconnect(name: str):
-    # Mark disconnect time if not already set so status shows session end.
-    with clients_cache_lock:
-        info = clients_cache.get(name)
-        if info and not info.get("disconnected_at"):
-            info["disconnected_at"] = now_str()
-
-def format_status_json():
-    # Build a dict suitable for JSON export. Sort keys by numeric id so
-    # Client01 appears before Client02 in the output.
-    with clients_cache_lock:
-        def keyfunc(k):
-            try:
-                return int(k.replace("Client", ""))
-            except Exception:
-                return k
-        out = {}
-        for name in sorted(clients_cache.keys(), key=keyfunc):
-            info = clients_cache[name]
-            addr = info.get("addr")
-            out.setdefault(name, []).append({
-                "address": [addr[0], addr[1]] if addr else None,
-                "connected_at": info.get("connected_at"),
-                "disconnected_at": info.get("disconnected_at"),
-            })
-        return out
-
-def ensure_repo():
-    # Create the repo directory if it doesn't exist. Keeps file features simple.
-    REPO_DIR.mkdir(exist_ok=True)
-
-def list_repo_files():
-    # Return non-hidden files in the repo; used by the "list" command.
-    ensure_repo()
-    try:
-        return [p.name for p in sorted(REPO_DIR.iterdir())
-                if p.is_file() and not p.name.startswith(".")]
-    except FileNotFoundError:
-        return []
-
-def safe_open_from_repo(name: str):
-    # Open a file from repo safely:
-    if not name or "/" in name or "\\" in name:
-        return None, None
-    p = (REPO_DIR / name).resolve()
-    root = REPO_DIR.resolve()
-    if not (p.exists() and p.is_file() and p.parent == root):
-        return None, None
-    try:
-        f = p.open("rb")
-        return f, p.stat().st_size
-    except Exception:
-        return None, None
-
-def handle_client(conn, addr):
-    # Per-connection handler run in its own thread.
-    assigned = try_assign_client_id()
-    if assigned is None:
-        # Server full: let the client know and close the write side so it sees EOF.
-        sendline(conn, f"BUSY: Server is full ({MAX_CLIENTS} clients max reached)")
-        try:
-            conn.shutdown(socket.SHUT_WR)
-        except Exception:
-            pass
-        conn.close()
+# helper to print file 
+def _handle_print(sock, msg: str):
+    fname = _parse_print_filename(msg)
+    if not fname:
+        _send_with_eof(sock, b"Usage: print 'filename'\n")
         return
 
-    # Handshake: server proposes NAME? ClientNN and expects "NAME ClientNN".
-    sendline(conn, f"NAME? {assigned}")
-    hello = recvline(conn)
-    if not hello or not hello.startswith("NAME "):
-        # Handshake failed: release id and close connection.
-        release_client_id(assigned)
-        try:
-            conn.shutdown(socket.SHUT_WR)
-        except Exception:
-            pass
-        conn.close()
+    fpath = os.path.join(REPO_PATH, fname)
+    if not (os.path.isfile(fpath)):
+        _send_with_eof(sock, b"File not found.\n")
         return
 
-    # Record metadata for status reporting.
-    record_connect(assigned, addr)
-
     try:
-        while True:
-            msg = recvline(conn)
-            if msg is None:
-                # client closed connection
-                break
-            low = msg.strip().lower()
+        with open(fpath, 'rb') as f:
+            while True:
+                chunk = f.read(1024)
+                if not chunk:
+                    break
+                sock.sendall(chunk)
+        sock.sendall(EOF_MARKER)
+    except Exception as e:
+        _send_with_eof(sock, f"Error reading file: {e}\n".encode())
 
-            if low == "exit":
-                # client exit: acknowledge and stop handling.
-                sendline(conn, "EXIT")
-                break
 
-            elif low == "list":
-                files = list_repo_files()
-                line = "List of files: " + (", ".join(files) if files else "(empty)")
-                sendline(conn, line)
+def handle_client(client_socket, client_address, client_name):
+    global client_cache, client_count
 
-            elif low.startswith("print "):
-                # Serve raw file bytes after a "FILE <name> <size>" header.
-                req_name = msg.strip()[6:].strip()
-                f, size = safe_open_from_repo(req_name)
-                if not f:
-                    sendline(conn, "ERROR: File not found or invalid name")
-                else:
-                    sendline(conn, f"FILE {req_name} {size}")
-                    with f:
-                        # stream file in chunks so we don't load entire file into memory
-                        while True:
-                            chunk = f.read(64 * 1024)
-                            if not chunk:
-                                break
-                            try:
-                                conn.sendall(chunk)
-                            except Exception:
-                                # on send error just stop transfer
-                                break
+    # Assign a unique client name based on client count
+    client_socket.sendall(f"You are {client_name}.".encode())
+    print(f"{client_name} connected from {client_address}.")
 
-            elif low == "status":
-                # Return JSON describing currently seen clients and their timestamps.
-                payload = format_status_json()
-                send_json(conn, "STATUS", payload)
+    #adding client information to memory cache
+    start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Store address/port + connect/disconnect times
+    client_cache[client_name] = {
+        "address": client_address[0],
+        "port": client_address[1],
+        "start_time": start_time,
+        "end_time": "N/A"
+    }
 
+    while True:
+        message = client_socket.recv(1024).decode()
+
+        #exit = close connections and terminate the program
+        if message.lower() == "exit":
+
+            #end time for cache
+            end_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            #set the end time in memory cache
+            client_cache[client_name]["end_time"] = end_time
+
+            #close socket and prints message
+            client_socket.send(f"Connection closed for {client_name}".encode())
+            print(f"{client_name} disconnected.")
+            client_socket.close()
+
+            #remove from cache and free the slot
+            available_client_slots.append(client_name)
+            available_client_slots.sort()
+           
+            #decrements the client_count to ensure doesn't go over the limit
+            global client_count
+            client_count -= 1
+            break
+        
+        # formats status function 
+        elif message == "status":
+            if client_cache:
+                lines = []
+                for cname, info in client_cache.items():
+                    addr = info.get("address", "?")
+                    port = info.get("port", "?")
+                    start = info.get("start_time", "?")
+                    end = info.get("end_time", "N/A")
+                    lines.append(f"{cname} — {addr}:{port} — Connected: {start} — Disconnected: {end}")
+                status_text = "\n".join(lines)
             else:
-                # Default echo acknowledgement keeps client interactions simple.
-                sendline(conn, f"{msg} ACK")
-    finally:
-        # Ensure we always record disconnect time, free the id, and close socket.
-        record_disconnect(assigned)
-        release_client_id(assigned)
-        try:
-            conn.shutdown(socket.SHUT_WR)
-        except Exception:
-            pass
-        conn.close()
+                status_text = "No clients yet."
+            client_socket.send(status_text.encode())
 
-def main():
-    # Server entry point: make sure repo exists, bind socket, and accept connections.
-    ensure_repo()
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((HOST, PORT))
-        srv.listen(8)
-        print(f"[SERVER] Listening on {HOST}:{PORT} | repo={REPO_DIR}")
-        while True:
-            try:
-                conn, addr = srv.accept()
-            except KeyboardInterrupt:
-                print("\n[SERVER] Shutting down.")
-                break
-            # Spawn a thread per client so handlers run independently.
-            t = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
-            t.start()
+        # list files in repo
+        elif message == "list":
+            _handle_list(client_socket)
 
+        # stream file contents
+        elif message.startswith("print "):
+            _handle_print(client_socket, message)
+
+        else:
+            client_socket.send(f"{message} ACK".encode())
+           
+#starts server and manages incoming connections
+def start_server():
+    global client_count
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(('0.0.0.0', 9999))
+    server.listen(MAX_CLIENTS)
+
+    print(f"Server started. Listening for connections on...")
+
+    while True:
+        #accept connection
+        client_socket, client_address = server.accept()
+
+        #ensure client_count doesn't go over the limit
+        if client_count < MAX_CLIENTS:
+            client_count += 1
+
+            #assign the first available client slot
+            client_name = available_client_slots.pop(0)
+
+            #start a new thread to handle client
+            thread = threading.Thread(target=handle_client, args=(client_socket, client_address, client_name))
+            thread.start()
+
+        #server at max capacity
+        else:
+            #print to client and server
+            client_socket.send("Server is at max capacity. Please try again later.".encode())
+            client_socket.close()
+            print("Server is at max capacity. Waiting for clients to disconnect...")
+       
+   
 if __name__ == "__main__":
-    main()
+    start_server()
