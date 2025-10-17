@@ -10,7 +10,6 @@ import socket
 
 EOF_MARKER = b"<<EOF>>" 
 
-
 # helper function for list feature
 def _recv_until_eof(sock) -> bytes:
     buffer = bytearray()
