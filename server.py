@@ -28,7 +28,8 @@ def _send_with_eof(sock, data: bytes):
     sock.sendall(EOF_MARKER)
 
 
-# helper to handle list function
+# helper for file error handling
+# frames the variable-length payload with an EOF Marker
 def _handle_list(sock):
     try:
         entries = []
@@ -43,6 +44,7 @@ def _handle_list(sock):
     _send_with_eof(sock, payload)
 
 # helper to parse filenames from repo
+# permits spaces in file names when quoted
 def _parse_print_filename(msg: str) -> str | None:
     rest = msg[6:].strip() 
     if not rest:
@@ -51,7 +53,9 @@ def _parse_print_filename(msg: str) -> str | None:
         return rest[1:-1].strip()
     return rest.split()[0]
 
-# helper to print file 
+# helper to handle print <filename> in list
+# checks if file exists in repo
+# sends EOF marker to signal completion
 def _handle_print(sock, msg: str):
     fname = _parse_print_filename(msg)
     if not fname:
@@ -60,12 +64,14 @@ def _handle_print(sock, msg: str):
 
     fpath = os.path.join(REPO_PATH, fname)
     if not (os.path.isfile(fpath)):
+        # simple error handling 
         _send_with_eof(sock, b"File not found.\n")
         return
 
     try:
         with open(fpath, 'rb') as f:
             while True:
+                # uses 1024-byte chunks to stream to client
                 chunk = f.read(1024)
                 if not chunk:
                     break
