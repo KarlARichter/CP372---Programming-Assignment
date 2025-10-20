@@ -30,16 +30,16 @@ def start_client():
 
     #initial connection with server
     client_name_message = client.recv(1024).decode()
-    print("Server response:", client_name_message)
+    print("Server Response:", client_name_message)
    
     #check if the server is at max capacity
-    if "Server is at max capacity" in client_name_message:
+    if "Server is at full capacity" in client_name_message:
         client.close()  # Close the connection
         return
 
     #allows the user to input a message via the input() function
     while True:
-        message = input("Enter message: ")
+        message = input("Enter a message: ")
         #The message is then encoded to bytes and sent to the server
         client.send(message.encode())
         lower = message.lower()
@@ -62,7 +62,7 @@ def start_client():
             # Print status without prefix 
             print(client.recv(4096).decode())
         else:
-            print("Server response: ", client.recv(1024).decode())
+            print("Server's Response: ", client.recv(1024).decode())
 
 
 if __name__ == "__main__":

@@ -175,12 +175,12 @@ def start_server():
             thread = threading.Thread(target=handle_client, args=(client_socket, client_address, client_name))
             thread.start()
 
-        #server at max capacity
+        #server is at  a maximum capacity
         else:
             #print to client and server
-            client_socket.send("Server is at max capacity. Please try again later.".encode())
+            client_socket.send("Server is at full capacity. Try again.".encode())
             client_socket.close()
-            print("Server is at max capacity. Waiting for clients to disconnect...")
+            print("Server is at full capacity. Clients to disconnect...")
        
    
 if __name__ == "__main__":
